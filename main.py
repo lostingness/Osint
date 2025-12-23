@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSINT Telegram Bot - Railway Fixed Version
+OSINT Telegram Bot - Railway Fixed Version with Event Loop Fix
 Deploy with: main.py + requirements.txt + Procfile
 """
 
@@ -9,6 +9,7 @@ import logging
 import requests
 import tempfile
 import asyncio
+import threading
 import json
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -25,8 +26,7 @@ TELEGRAM_BOT_TOKEN = "8329681179:AAG1GONFFmEDRYH-MQwCw7REVugNXEAjZEQ"
 ADMIN_USER_IDS = [20022466, 8488687671]  # Add more admin IDs as needed
 
 # For Railway
-PORT = int(os.environ.get("PORT", 5000))
-RAILWAY_STATIC_URL = os.environ.get("RAILWAY_STATIC_URL", "")
+PORT = int(os.environ.get("PORT", 8080))
 
 # API Endpoints
 TG_INFO_API = "https://my.lostingness.site/tgn.php?value={}"
@@ -35,7 +35,7 @@ UNIVERSAL_API = "https://my.lostingness.site/infox.php?type={}"
 # Flask app
 app = Flask(__name__)
 
-# Global variables
+# Global application instance
 application = None
 
 # ====================== HELPER FUNCTIONS ======================
@@ -501,7 +501,8 @@ def home():
         "status": "online",
         "service": "Telegram OSINT Bot",
         "admin_count": len(ADMIN_USER_IDS),
-        "message": "Bot is running on Railway"
+        "message": "Bot is running on Railway",
+        "bot_status": "active" if application else "starting"
     })
 
 @app.route('/health')
@@ -510,8 +511,8 @@ def health():
     return jsonify({"status": "healthy"}), 200
 
 # ====================== BOT SETUP ======================
-def setup_bot():
-    """Setup Telegram bot"""
+async def setup_bot_async():
+    """Setup and run Telegram bot (async version)"""
     global application
     
     try:
@@ -535,30 +536,50 @@ def setup_bot():
         print("🔄 Starting bot in polling mode...")
         
         # Start polling
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES
-        )
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        print("✅ Bot started successfully!")
+        
+        # Keep running
+        await asyncio.Event().wait()
         
     except Exception as e:
         print(f"❌ Bot startup error: {e}")
         import traceback
         traceback.print_exc()
 
-# ====================== START BOT IN BACKGROUND ======================
+def run_bot():
+    """Run bot in a separate thread with proper event loop"""
+    # Create new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Run the async bot setup
+        loop.run_until_complete(setup_bot_async())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.close()
+
+# ====================== START BOT ======================
 def start_bot_in_background():
     """Start bot in background thread"""
-    import threading
-    
-    def run_bot():
-        setup_bot()
-    
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread = threading.Thread(target=run_bot, daemon=True, name="BotThread")
     bot_thread.start()
     print("✅ Bot thread started in background")
+    return bot_thread
 
 # ====================== MAIN ======================
 if __name__ == "__main__":
+    # Configure logging
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    
     # Start bot in background
     start_bot_in_background()
     
